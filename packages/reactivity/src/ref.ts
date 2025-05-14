@@ -42,6 +42,7 @@ export interface Ref<T = any, S = T> {
  */
 export function isRef<T>(r: Ref<T> | unknown): r is Ref<T>
 export function isRef(r: any): r is Ref {
+  // isRef的实现，是通过 内部标识位ReactiveFlags 来判断
   return r ? r[ReactiveFlags.IS_REF] === true : false
 }
 
@@ -56,6 +57,8 @@ export function ref<T>(
   value: T,
 ): [T] extends [Ref] ? IfAny<T, Ref<T>, T> : Ref<UnwrapRef<T>, UnwrapRef<T> | T>
 export function ref<T = any>(): Ref<T | undefined>
+
+// ! ref使用，调用createRef函数
 export function ref(value?: unknown) {
   return createRef(value, false)
 }
@@ -95,11 +98,15 @@ export function shallowRef(value?: unknown) {
   return createRef(value, true)
 }
 
+//! createRef
 function createRef(rawValue: unknown, shallow: boolean) {
+  // ! 通过 isRef 判断原始值rawValue是否为 ref对象
+  // ! 如果是 ref对象 ，则直接返回原始值
   if (isRef(rawValue)) {
-    return rawValue
+    return rawValue;
   }
-  return new RefImpl(rawValue, shallow)
+  // ! 如果不是 ref对象 ，返回 RefImpl包装类
+  return new RefImpl(rawValue, shallow);
 }
 
 /**
@@ -109,18 +116,25 @@ class RefImpl<T = any> {
   _value: T
   private _rawValue: T
 
+	// Dep 类是 Vue 3 响应式系统中用于管理依赖关系的核心组件，
+	// 它通过双向链表和版本控制机制，确保依赖项的变化能够准确、高效地通知到所有订阅者。
   dep: Dep = new Dep()
 
+	// 只读属性 IS_REF 内部判断是否为ref对象的标识位
   public readonly [ReactiveFlags.IS_REF] = true
   public readonly [ReactiveFlags.IS_SHALLOW]: boolean = false
 
   constructor(value: T, isShallow: boolean) {
+		// 非浅比较 用 toRaw() 处理为原始值。toRaw源码见 1.4
     this._rawValue = isShallow ? value : toRaw(value)
+		// 非浅比较 用 toReactive() 处理为响应式。toReactive源码见 1.4
     this._value = isShallow ? value : toReactive(value)
     this[ReactiveFlags.IS_SHALLOW] = isShallow
   }
 
+	// getter 收集依赖
   get value() {
+		// 在开发模式下，调用 dep.track 方法，传递目标对象、操作类型和键值，以跟踪依赖关系。
     if (__DEV__) {
       this.dep.track({
         target: this,
@@ -128,21 +142,30 @@ class RefImpl<T = any> {
         key: 'value',
       })
     } else {
+			// 在生产模式下，直接调用 dep.track 方法。开启依赖收集
       this.dep.track()
     }
     return this._value
   }
 
+	// setter 触发依赖更新
   set value(newValue) {
     const oldValue = this._rawValue
+
+		// 通过 标识位ReactiveFlags 判断是否直接使用新值
     const useDirectValue =
       this[ReactiveFlags.IS_SHALLOW] ||
       isShallow(newValue) ||
       isReadonly(newValue)
+
+		// 通过 useDirectValue 判断是否直接使用新值 还是解包新值返回原始值
     newValue = useDirectValue ? newValue : toRaw(newValue)
+
+		// 检查新值与旧值是否发生变化。
     if (hasChanged(newValue, oldValue)) {
       this._rawValue = newValue
       this._value = useDirectValue ? newValue : toReactive(newValue)
+			// 在开发模式下，调用 dep.trigger 方法，传递目标对象、操作类型、键值、新值和旧值，以触发依赖更新。
       if (__DEV__) {
         this.dep.trigger({
           target: this,
@@ -152,6 +175,7 @@ class RefImpl<T = any> {
           oldValue,
         })
       } else {
+			// 在生产模式下，直接调用 dep.trigger 方法。触发依赖更新
         this.dep.trigger()
       }
     }

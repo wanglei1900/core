@@ -14,6 +14,7 @@ export enum TriggerOpTypes {
   CLEAR = 'clear',
 }
 
+// ReactiveFlags 标识位枚举
 export enum ReactiveFlags {
   SKIP = '__v_skip',
   IS_REACTIVE = '__v_isReactive',

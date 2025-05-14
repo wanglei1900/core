@@ -1,10 +1,16 @@
+// def: 定义对象的不可枚举属性（用于标记原始对象）
+// toRawType: 获取对象的原始类型（如 Object, Array）
 import { def, hasOwn, isObject, toRawType } from '@vue/shared'
+
+// baseHandlers: 处理普通对象/数组的 Proxy 陷阱（如 get, set）
 import {
-  mutableHandlers,
-  readonlyHandlers,
-  shallowReactiveHandlers,
-  shallowReadonlyHandlers,
+  mutableHandlers,  // ! reactive 函数
+  readonlyHandlers,  // ! readonly  函数
+  shallowReactiveHandlers,  // ! shallowReactive  函数
+  shallowReadonlyHandlers,  // ! shallowReadonly  函数
 } from './baseHandlers'
+
+// collectionHandlers: 处理集合类型（Map, Set 等）的 Proxy 陷阱
 import {
   mutableCollectionHandlers,
   readonlyCollectionHandlers,
@@ -16,13 +22,14 @@ import { ReactiveFlags } from './constants'
 import { warn } from './warning'
 
 export interface Target {
-  [ReactiveFlags.SKIP]?: boolean
+  [ReactiveFlags.SKIP]?: boolean  // ! 开发者主动声明跳过响应式
   [ReactiveFlags.IS_REACTIVE]?: boolean
   [ReactiveFlags.IS_READONLY]?: boolean
   [ReactiveFlags.IS_SHALLOW]?: boolean
   [ReactiveFlags.RAW]?: any
 }
 
+// ! WeakMap 缓存：存储已代理的对象，避免重复创建 Proxy（WeakMap 键为弱引用，不影响 GC）
 export const reactiveMap: WeakMap<Target, any> = new WeakMap<Target, any>()
 export const shallowReactiveMap: WeakMap<Target, any> = new WeakMap<
   Target,
@@ -35,9 +42,9 @@ export const shallowReadonlyMap: WeakMap<Target, any> = new WeakMap<
 >()
 
 enum TargetType {
-  INVALID = 0,
-  COMMON = 1,
-  COLLECTION = 2,
+  INVALID = 0,  // ! 不可代理类型（如原始值、不可扩展对象）
+  COMMON = 1, // ! 普通对象/数组
+  COLLECTION = 2, // ! 集合类型（Map, Set 等）
 }
 
 function targetTypeMap(rawType: string) {
@@ -58,7 +65,7 @@ function targetTypeMap(rawType: string) {
 function getTargetType(value: Target) {
   return value[ReactiveFlags.SKIP] || !Object.isExtensible(value)
     ? TargetType.INVALID
-    : targetTypeMap(toRawType(value))
+    : targetTypeMap(toRawType(value)) // ! toRawType 使用 Object.prototype.toString 判断对象的类型
 }
 
 // only unwrap nested ref
@@ -90,7 +97,7 @@ export type Reactive<T> = UnwrapNestedRefs<T> &
  */
 export function reactive<T extends object>(target: T): Reactive<T>
 export function reactive(target: object) {
-  // if trying to observe a readonly proxy, return the readonly version.
+  // 只读代理，直接返回
   if (isReadonly(target)) {
     return target
   }
@@ -108,9 +115,9 @@ export declare const ShallowReactiveMarker: unique symbol
 export type ShallowReactive<T> = T & { [ShallowReactiveMarker]?: true }
 
 /**
- * Shallow version of {@link reactive}.
+ * Shallow version of {@link reactive()}.
  *
- * Unlike {@link reactive}, there is no deep conversion: only root-level
+ * Unlike {@link reactive()}, there is no deep conversion: only root-level
  * properties are reactive for a shallow reactive object. Property values are
  * stored and exposed as-is - this also means properties with ref values will
  * not be automatically unwrapped.
@@ -178,7 +185,7 @@ export type DeepReadonly<T> = T extends Builtin
  * the original.
  *
  * A readonly proxy is deep: any nested property accessed will be readonly as
- * well. It also has the same ref-unwrapping behavior as {@link reactive},
+ * well. It also has the same ref-unwrapping behavior as {@link reactive()},
  * except the unwrapped values will also be made readonly.
  *
  * @example
@@ -215,9 +222,9 @@ export function readonly<T extends object>(
 }
 
 /**
- * Shallow version of {@link readonly}.
+ * Shallow version of {@link readonly()}.
  *
- * Unlike {@link readonly}, there is no deep conversion: only root-level
+ * Unlike {@link readonly()}, there is no deep conversion: only root-level
  * properties are made readonly. Property values are stored and exposed as-is -
  * this also means properties with ref values will not be automatically
  * unwrapped.
@@ -254,6 +261,15 @@ export function shallowReadonly<T extends object>(target: T): Readonly<T> {
   )
 }
 
+/**
+ * @description: 
+ * @param target - 源对象
+ * @param isReadonly - 是否只读
+ * @param baseHandlers - 基本对象类型的 handlers， 处理数组，对象.
+ * @param collectionHandlers - 集合对象类型的handlers，处理set、map、weakSet、weakMap.
+ * @param proxyMap - WeakMap数据结构存储副作用函数.
+ * @return {*}
+ */
 function createReactiveObject(
   target: Target,
   isReadonly: boolean,
@@ -261,6 +277,7 @@ function createReactiveObject(
   collectionHandlers: ProxyHandler<any>,
   proxyMap: WeakMap<Target, any>,
 ) {
+  // ! 不是对象类型返回目标，并且在开发模式下抛出错误提醒
   if (!isObject(target)) {
     if (__DEV__) {
       warn(
@@ -271,24 +288,31 @@ function createReactiveObject(
     }
     return target
   }
-  // target is already a Proxy, return it.
-  // exception: calling readonly() on a reactive object
+
+  // ! 避免重复代理
+  // ! target[ReactiveFlags.RAW] 指向原始未被代理的对象。检测到该属性，说明已经经过代理的响应式对象。
+  // ! 特例：对响应式对象创建只读代理，允许创建新的只读代理
   if (
     target[ReactiveFlags.RAW] &&
     !(isReadonly && target[ReactiveFlags.IS_REACTIVE])
   ) {
     return target
   }
-  // only specific value types can be observed.
+
+  // ! 检查是否可以代理，不可代理直接返回
   const targetType = getTargetType(target)
   if (targetType === TargetType.INVALID) {
     return target
   }
-  // target already has corresponding Proxy
+
+  // ! 尝试直接从缓存直接拿取代理对象
   const existingProxy = proxyMap.get(target)
   if (existingProxy) {
     return existingProxy
   }
+
+  // ! 创建新的proxy并缓存
+  // ! 利用 Proxy 创建响应式对象，对象或数组类型使用 baseHandlers，Set/Map/WeakSet/WeakMap类型collectionHandlers
   const proxy = new Proxy(
     target,
     targetType === TargetType.COLLECTION ? collectionHandlers : baseHandlers,
@@ -298,8 +322,8 @@ function createReactiveObject(
 }
 
 /**
- * Checks if an object is a proxy created by {@link reactive} or
- * {@link shallowReactive} (or {@link ref} in some cases).
+ * Checks if an object is a proxy created by {@link reactive()} or
+ * {@link shallowReactive()} (or {@link ref()} in some cases).
  *
  * @example
  * ```js
@@ -327,23 +351,26 @@ export function isReactive(value: unknown): boolean {
  * readonly object can change, but they can't be assigned directly via the
  * passed object.
  *
- * The proxies created by {@link readonly} and {@link shallowReadonly} are
+ * The proxies created by {@link readonly()} and {@link shallowReadonly()} are
  * both considered readonly, as is a computed ref without a set function.
  *
  * @param value - The value to check.
  * @see {@link https://vuejs.org/api/reactivity-utilities.html#isreadonly}
  */
+
+// 判断是否为只读对象。通过 标识位ReactiveFlags 判断
 export function isReadonly(value: unknown): boolean {
   return !!(value && (value as Target)[ReactiveFlags.IS_READONLY])
 }
 
+// 判断是否为浅比较。通过 标识位ReactiveFlags 判断
 export function isShallow(value: unknown): boolean {
   return !!(value && (value as Target)[ReactiveFlags.IS_SHALLOW])
 }
 
 /**
  * Checks if an object is a proxy created by {@link reactive},
- * {@link readonly}, {@link shallowReactive} or {@link shallowReadonly}.
+ * {@link readonly}, {@link shallowReactive} or {@link shallowReadonly()}.
  *
  * @param value - The value to check.
  * @see {@link https://vuejs.org/api/reactivity-utilities.html#isproxy}
@@ -356,8 +383,8 @@ export function isProxy(value: any): boolean {
  * Returns the raw, original object of a Vue-created proxy.
  *
  * `toRaw()` can return the original object from proxies created by
- * {@link reactive}, {@link readonly}, {@link shallowReactive} or
- * {@link shallowReadonly}.
+ * {@link reactive()}, {@link readonly()}, {@link shallowReactive()} or
+ * {@link shallowReadonly()}.
  *
  * This is an escape hatch that can be used to temporarily read without
  * incurring proxy access / tracking overhead or write without triggering
@@ -375,8 +402,12 @@ export function isProxy(value: any): boolean {
  * @param observed - The object for which the "raw" value is requested.
  * @see {@link https://vuejs.org/api/reactivity-advanced.html#toraw}
  */
+// 解包 vue创建的代理 为 原始对象。
+// toRaw() 可以返回由 reactive()、readonly()、shallowReactive() 或者 shallowReadonly() 创建的代理对应的原始对象。
 export function toRaw<T>(observed: T): T {
+	// 通过判断代理对象的 标识位ReactiveFlags 来判断是否需要解包
   const raw = observed && (observed as Target)[ReactiveFlags.RAW]
+	// 递归解包代理对象
   return raw ? toRaw(raw) : observed
 }
 
@@ -397,7 +428,7 @@ export type Raw<T> = T & { [RawSymbol]?: true }
  * ```
  *
  * **Warning:** `markRaw()` together with the shallow APIs such as
- * {@link shallowReactive} allow you to selectively opt-out of the default
+ * {@link shallowReactive()} allow you to selectively opt-out of the default
  * deep reactive/readonly conversion and embed raw, non-proxied objects in your
  * state graph.
  *
@@ -418,6 +449,8 @@ export function markRaw<T extends object>(value: T): Raw<T> {
  *
  * @param value - The value for which a reactive proxy shall be created.
  */
+// 转为响应式对象
+// 值为对象类型，则使用 Proxy 代理。否则返回原始值
 export const toReactive = <T extends unknown>(value: T): T =>
   isObject(value) ? reactive(value) : value
 

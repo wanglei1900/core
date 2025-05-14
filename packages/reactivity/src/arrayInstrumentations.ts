@@ -231,6 +231,16 @@ type ArrayMethods = keyof Array<any> | 'findLast' | 'findLastIndex'
 const arrayProto = Array.prototype
 // instrument functions that read (potentially) all items
 // to take ARRAY_ITERATE dependency
+/**
+ * @description: 数组遍历方法的核心适配器（代码插桩，建立 ARRAY_ITERATE 依赖）
+ * @param {*} self: 当前数组实例
+ * @param {*} method: 调用的数组方法名
+ * @param {*} fn: 传入回调函数
+ * @param {*} thisArg: 传入回调函数this指向（可选）
+ * @param {*} wrappedRetFn: 返回值包装函数（可选）
+ * @param {*} args: 原始参数（可选）
+ * @return {*}
+ */
 function apply(
   self: unknown[],
   method: ArrayMethods,
@@ -239,33 +249,45 @@ function apply(
   wrappedRetFn?: (result: any) => unknown,
   args?: IArguments,
 ) {
+  // 触发 ARRAY_ITERATE 依赖追踪 并 返回原始数组。shallowReadArray方法见上面
   const arr = shallowReadArray(self)
+  // 判断是否需要响应式包装返回值(非浅层响应式)，toRaw成功剥离self 并且 self为非浅层响应式
   const needsWrap = arr !== self && !isShallow(self)
   // @ts-expect-error our code is limited to es2016 but user code is not
+  // 获取原生数组方法
   const methodFn = arr[method]
 
   // #11759
   // If the method being called is from a user-extended Array, the arguments will be unknown
   // (unknown order and unknown parameter types). In this case, we skip the shallowReadArray
   // handling and directly call apply with self.
+  // 当方法非原生数组方法时（如用户自定义的数组扩展方法）
   if (methodFn !== arrayProto[method as any]) {
+    // 直接调用用户定义的方法
     const result = methodFn.apply(self, args)
+    // 若需要响应式包装，将返回值重新转换为响应式对象
     return needsWrap ? toReactive(result) : result
   }
 
   let wrappedFn = fn
+  // 当前数组是响应式代理
   if (arr !== self) {
+    // 需要响应式包装
     if (needsWrap) {
       wrappedFn = function (this: unknown, item, index) {
+        // 将 item 转换为响应式对象
+        // 确保回调函数接收到的 item 是响应式代理（深度模式）
         return fn.call(this, toReactive(item), index, self)
       }
-    } else if (fn.length > 2) {
+    } else if (fn.length > 2) { // 处理回调函数的第三个参数（原始数组）
       wrappedFn = function (this: unknown, item, index) {
         return fn.call(this, item, index, self)
       }
     }
   }
+  // 执行原生方法
   const result = methodFn.call(arr, wrappedFn, thisArg)
+  // 是否需要处理包装函数 wrappedRetFn
   return needsWrap && wrappedRetFn ? wrappedRetFn(result) : result
 }
 
@@ -293,19 +315,32 @@ function reduce(
 }
 
 // instrument identity-sensitive methods to account for reactive proxies
+/**
+ * @description: 数组查找方法的核心适配器（需判断传入的是原始对象还是响应式代理）
+ * @param {*} self: 当前数组实例
+ * @param {*} method: 调用的方法名
+ * @param {*} args: 方法调用时的参数
+ * @return {*}
+ */
 function searchProxy(
   self: unknown[],
   method: keyof Array<any>,
   args: unknown[],
 ) {
+  // 获取原始数组
   const arr = toRaw(self) as any
+  // 追踪迭代依赖
   track(arr, TrackOpTypes.ITERATE, ARRAY_ITERATE_KEY)
   // we run the method using the original args first (which may be reactive)
+  // 第一次查找（使用原始参数）
   const res = arr[method](...args)
 
   // if that didn't work, run it again using raw values.
+  // 查找失败 && 第一个参数是响应式代理
   if ((res === -1 || res === false) && isProxy(args[0])) {
+    // 转换第一个参数为原始值
     args[0] = toRaw(args[0])
+    // 重新调用方法
     return arr[method](...args)
   }
 
