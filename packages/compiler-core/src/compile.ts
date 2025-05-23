@@ -28,14 +28,17 @@ export type TransformPreset = [
   Record<string, DirectiveTransform>,
 ]
 
+// 转换器顺序的优先级控制
 export function getBaseTransformPreset(
   prefixIdentifiers?: boolean,
 ): TransformPreset {
   return [
     [
       transformOnce,
+      // 先处理v-if，v-if 的条件判断被提升到外层作用域
       transformIf,
       transformMemo,
+      // 在处理v-for
       transformFor,
       ...(__COMPAT__ ? [transformFilter] : []),
       ...(!__BROWSER__ && prefixIdentifiers

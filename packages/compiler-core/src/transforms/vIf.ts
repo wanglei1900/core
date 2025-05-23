@@ -211,6 +211,8 @@ function createIfBranch(node: ElementNode, dir: DirectiveNode): IfBranchNode {
     type: NodeTypes.IF_BRANCH,
     loc: node.loc,
     condition: dir.name === 'else' ? undefined : dir.exp,
+    // # 对于没有 v-for 的 template 节点，v-if 的条件分支内容是其子节点；（纯逻辑容器）
+    // # 其他情况（非 template 节点或含有 v-for），将节点本身作为分支内容
     children: isTemplateIf && !findDir(node, 'for') ? node.children : [node],
     userKey: findProp(node, `key`),
     isTemplateIf,
